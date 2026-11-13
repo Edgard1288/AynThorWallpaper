@@ -13,7 +13,7 @@
 html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
   padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);}
-#app{display:flex; height:100%; min-height:100vh;}
+#app{display:flex; height:100dvh; min-height:0;}
 @media (max-width:820px){ #app{flex-direction:column;} }
 
 #panel{width:320px; flex:0 0 320px; background:var(--panel); border-right:1px solid var(--border);
@@ -40,11 +40,12 @@ button#exportBtn:hover{filter:brightness(1.05);}
 button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
 .hint{font-size:11px; color:var(--text-dim); margin-top:10px; line-height:1.5;}
 
-#canvasArea{flex:1; display:flex; align-items:center; justify-content:center; padding:24px; overflow:hidden;
+#canvasArea{flex:1; min-width:0; min-height:0; display:flex; align-items:center; justify-content:center; padding:24px; overflow:hidden;
   background:
     radial-gradient(circle at 30% 20%, #1a1e27 0%, #101318 70%);
 }
-#stage{position:relative;}
+#stage{position:relative; max-width:100%;}
+@media (max-width:820px){ #app{height:auto; min-height:100dvh;} #canvasArea{flex:none; height:70dvh; min-height:320px; padding:16px;} }
 #previewCanvas{display:block; background:#000; border-radius:4px; box-shadow:0 0 0 1px #000, 0 20px 60px rgba(0,0,0,.5);
   touch-action:none; cursor:grab; max-width:100%; max-height:100%;}
 #previewCanvas.dragging{cursor:grabbing;}
@@ -73,25 +74,27 @@ button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
     </fieldset>
 
     <fieldset>
-      <legend>Pantalla Superior</legend>
+      <legend>Pantalla superior · 6″</legend>
       <div class="row">
-        <div><label>Ancho</label><input type="number" id="topW" value="1920"></div>
-        <div><label>Alto</label><input type="number" id="topH" value="1080"></div>
+        <div><label>Ancho</label><input type="number" id="topW" readonly value="1920"></div>
+        <div><label>Alto</label><input type="number" id="topH" readonly value="1080"></div>
       </div>
     </fieldset>
 
     <fieldset>
-      <legend>Pantalla Inferior</legend>
+      <legend>Pantalla inferior · 3,92″</legend>
       <div class="row">
-        <div><label>Ancho</label><input type="number" id="botW" value="1240"></div>
-        <div><label>Alto</label><input type="number" id="botH" value="1080"></div>
+        <div><label>Ancho</label><input type="number" id="botW" readonly value="1240"></div>
+        <div><label>Alto</label><input type="number" id="botH" readonly value="1080"></div>
       </div>
     </fieldset>
 
     <fieldset>
-      <legend>Bisel</legend>
-      <label>Espacio "Gap" (px)</label>
-      <input type="number" id="gap" value="309">
+      <legend>Distribución física</legend>
+      <label for="gap">Separación entre áreas visibles (mm)</label>
+      <input type="number" id="gap" value="21.4" min="0" max="100" step="0.1">
+      <p class="hint">21,4 mm es una estimación inicial heredada del diseño anterior, no una medida oficial. Mide desde el borde inferior visible de la pantalla superior hasta el borde superior visible de la inferior y ajusta este valor.</p>
+      <p class="hint">Pantallas centradas y a escala física: superior ≈ 132,8 × 74,7 mm; inferior ≈ 75,1 × 65,4 mm. La exportación conserva la resolución nativa.</p>
     </fieldset>
 
     <button id="exportBtn" disabled>Exportar Ambas Pantallas</button>
@@ -124,13 +127,22 @@ button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
   let dragging=false, dragStartX=0, dragStartY=0, imgStartX=0, imgStartY=0;
 
   function dims(){
-    const topW=+topWEl.value||1, topH=+topHEl.value||1, botW=+botWEl.value||1, botH=+botHEl.value||1, gap=+gapEl.value||0;
-    const virtW = Math.max(topW, botW);
-    const virtH = topH + gap + botH;
+    // Shared composition coordinates use the top display's pixel density.
+    // The lower display has a different PPI: native pixels are not physical sizes.
+    const topW=1920, topH=1080, botW=1240, botH=1080;
+    const topPPI = Math.hypot(topW, topH) / 6;
+    const botPPI = Math.hypot(botW, botH) / 3.92;
+    const bottomScale = topPPI / botPPI;
+    const botDisplayW = botW * bottomScale;
+    const botDisplayH = botH * bottomScale;
+    const gapMM = Math.max(0, Math.min(100, Number(gapEl.value) || 0));
+    const gap = gapMM * topPPI / 25.4;
+    const virtW = topW, virtH = topH + gap + botDisplayH;
     return {
-      topW, topH, botW, botH, gap, virtW, virtH,
-      topOX: (virtW-topW)/2, topOY: 0,
-      botOX: (virtW-botW)/2, botOY: topH+gap
+      topW, topH, botW, botH, botDisplayW, botDisplayH,
+      gap, virtW, virtH,
+      topOX: 0, topOY: 0,
+      botOX: (virtW-botDisplayW)/2, botOY: topH+gap
     };
   }
 
@@ -151,14 +163,20 @@ button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
     pctx.fillStyle='#000';
     pctx.fillRect(0,0,previewCanvas.width, previewCanvas.height);
 
+    pctx.save();
+    pctx.beginPath();
+    pctx.rect(d.topOX*scale, 0, d.topW*scale, d.topH*scale);
+    pctx.rect(d.botOX*scale, d.botOY*scale, d.botDisplayW*scale, d.botDisplayH*scale);
+    pctx.clip();
     if(img){
       const dw = img.naturalWidth*zoom*scale, dh = img.naturalHeight*zoom*scale;
       pctx.drawImage(img, imgX*scale, imgY*scale, dw, dh);
     }
 
+    pctx.restore();
     pctx.strokeStyle='#e8b13a'; pctx.lineWidth=3;
     pctx.strokeRect(d.topOX*scale, d.topOY*scale, d.topW*scale, d.topH*scale);
-    pctx.strokeRect(d.botOX*scale, d.botOY*scale, d.botW*scale, d.botH*scale);
+    pctx.strokeRect(d.botOX*scale, d.botOY*scale, d.botDisplayW*scale, d.botDisplayH*scale);
     pctx.fillStyle='rgba(232,177,58,.85)'; pctx.font='11px sans-serif';
     pctx.fillText('SUPERIOR', d.topOX*scale+6, d.topOY*scale+16);
     pctx.fillText('INFERIOR', d.botOX*scale+6, d.botOY*scale+16);
@@ -186,8 +204,9 @@ button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
     im.onload = ()=>{
       img = im;
       const d = dims();
-      zoom = d.topW / img.naturalWidth;
-      imgX = d.topOX; imgY = 0;
+      zoom = Math.max(d.virtW / img.naturalWidth, d.virtH / img.naturalHeight);
+      imgX = (d.virtW-img.naturalWidth*zoom)/2;
+      imgY = (d.virtH-img.naturalHeight*zoom)/2;
       exportBtn.disabled = false;
       syncControls();
       resizePreview();
@@ -236,6 +255,7 @@ button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
   window.addEventListener('touchend', endDrag);
 
   window.addEventListener('resize', resizePreview);
+  new ResizeObserver(resizePreview).observe(canvasArea);
 
   function downloadCanvas(canvas, filename){
     const a = document.createElement('a');
@@ -247,16 +267,17 @@ button#exportBtn:disabled{opacity:.45; cursor:not-allowed;}
   exportBtn.addEventListener('click', ()=>{
     if(!img) return;
     const d = dims();
-    const full = $('fullCanvas'); full.width=d.virtW; full.height=d.virtH;
+    const full = $('fullCanvas'); full.width=Math.ceil(d.virtW); full.height=Math.ceil(d.virtH);
     const fctx = full.getContext('2d');
-    fctx.clearRect(0,0,d.virtW,d.virtH);
+    fctx.fillStyle='#000';
+    fctx.fillRect(0,0,full.width,full.height);
     fctx.drawImage(img, imgX, imgY, img.naturalWidth*zoom, img.naturalHeight*zoom);
 
     const top = $('topCanvas'); top.width=d.topW; top.height=d.topH;
     top.getContext('2d').drawImage(full, d.topOX, d.topOY, d.topW, d.topH, 0,0,d.topW,d.topH);
 
     const bot = $('botCanvas'); bot.width=d.botW; bot.height=d.botH;
-    bot.getContext('2d').drawImage(full, d.botOX, d.botOY, d.botW, d.botH, 0,0,d.botW,d.botH);
+    bot.getContext('2d').drawImage(full, d.botOX, d.botOY, d.botDisplayW, d.botDisplayH, 0,0,d.botW,d.botH);
 
     downloadCanvas(top, 'thor_top.png');
     setTimeout(()=> downloadCanvas(bot, 'thor_bottom.png'), 200);
